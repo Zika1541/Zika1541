@@ -17,7 +17,6 @@ CEC2021-style Benchmark — Colab 독립 실행 버전
 # ──────────────────────────────────────────────────────────────────────────────
 import numpy as np
 import time
-from scipy.optimize import differential_evolution
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  PSO
@@ -46,12 +45,9 @@ def pso(func, lower, upper, D=10, N=80, iterations=2000, seed=0):
 # ──────────────────────────────────────────────────────────────────────────────
 #  WO2 (Weather Optimization v2)
 # ──────────────────────────────────────────────────────────────────────────────
-def wo2(func, grad_func, lower=-5.12, upper=5.12, D=10, N=80, iterations=2000,
-        lr=0.05, beta=0.9, alpha=0.05, sigma=0.15, seed=0, n_blocks=1, return_history=False):
-    """WO2: 4-parameter simplified Weather Optimization (2026)
-    n_blocks=1 : 기존 동작 (전체 D차원 폭발)
-    n_blocks>1 : 블록 폭발 — D//n_blocks 차원만 랜덤화, 나머지는 x_best 고정
-    """
+def wo2(func, grad_func, lower=-5.12, upper=5.12, D=10, N=30, iterations=3333,
+        lr=0.05, beta=0.9, alpha=0.05, sigma=0.15, seed=0, return_history=False):
+    """WO2: 4-parameter simplified Weather Optimization (2026)"""
     rng  = np.random.default_rng(seed)
     span = upper - lower
     window = max(10, int(round(1.0 / (1.0 - beta))))
@@ -97,16 +93,8 @@ def wo2(func, grad_func, lower=-5.12, upper=5.12, D=10, N=80, iterations=2000,
                 n_exp      = min(n_explode, len(eligible_idx))
                 order      = np.argpartition(energy[eligible_idx], n_exp - 1)
                 explode_idx = eligible_idx[order[:n_exp]]
-                if n_blocks <= 1:
-                    noise = rng.standard_normal((n_exp, D))
-                    x[explode_idx] = np.clip(x_best + sigma * span * noise, lower, upper)
-                else:
-                    block_size = max(1, D // n_blocks)
-                    free_dims  = rng.choice(D, size=block_size, replace=False)
-                    x_new      = np.tile(x_best, (n_exp, 1))
-                    noise      = rng.standard_normal((n_exp, block_size))
-                    x_new[:, free_dims] = x_best[free_dims] + sigma * span * noise
-                    x[explode_idx] = np.clip(x_new, lower, upper)
+                noise = rng.standard_normal((n_exp, D))
+                x[explode_idx] = np.clip(x_best + sigma * span * noise, lower, upper)
                 v[explode_idx] = 0.0
                 energy[explode_idx] = np.median(energy)
                 last_exp[explode_idx] = t
@@ -217,25 +205,6 @@ def run_lshade(func, lower, upper, D=10, N=80, iterations=2000, seed=0, H=6):
 
     return best_fit
 
-# ──────────────────────────────────────────────────────────────────────────────
-#  DE (scipy wrapper) — 고정 budget 기반
-# ──────────────────────────────────────────────────────────────────────────────
-def run_de(func, lower, upper, D=10, N=80, iterations=2000, seed=0):
-    """DE via scipy — budget = N × iterations function evaluations."""
-    budget   = N * iterations
-    popsize  = 15                              # scipy 기본값 (pop = 15*D)
-    maxiter  = max(10, budget // (popsize * D))
-
-    def f1d(x):
-        return float(func(np.asarray(x).reshape(1, -1))[0])
-
-    res = differential_evolution(
-        f1d, [(lower, upper)] * D,
-        maxiter=maxiter, popsize=popsize,
-        seed=seed, tol=1e-14, atol=1e-14,
-        init="latinhypercube", polish=False,
-    )
-    return float(res.fun)
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  CEC2021-style 벤치마크 함수 (F1–F5)
@@ -350,42 +319,38 @@ class F5_ExpandedSchaffer(CEC2021Base):
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-#  실험 설정
+#  실험 설정  (CEC 표준: MaxFES = 10 000 × D)
 # ──────────────────────────────────────────────────────────────────────────────
-N_RUNS      = 10
-DIMS        = [10, 50, 100]
+N_RUNS       = 10
+DIMS         = [10, 30, 50]
+MAX_FES_COEF = 10_000          # MaxFES = MAX_FES_COEF × D
+N_WO2_PSO    = 30              # WO2 / PSO / RIME 공통 population
 FUNC_CLASSES = [F1_BentCigar, F2_Zakharov, F3_Rosenbrock, F4_Rastrigin, F5_ExpandedSchaffer]
-FUNC_NAMES  = [cls.name for cls in FUNC_CLASSES]
+FUNC_NAMES   = [cls.name for cls in FUNC_CLASSES]
 
+def _lshade_n(D):
+    """L-SHADE 문헌 권장 초기 집단 크기: 18 · √D · ln D"""
+    return max(30, int(18 * np.sqrt(D) * np.log(D)))
+
+# 각 람다: (func, D, max_fes, seed) → best_value
 ALGO_LIST = [
     ("WO2",
-     lambda func, D, N, it, s:
+     lambda func, D, fes, s:
          wo2(func, func.grad, func.bounds[0], func.bounds[1],
-             D=D, N=N, iterations=it, seed=s)),
-    ("WO2-Block2",
-     lambda func, D, N, it, s:
-         wo2(func, func.grad, func.bounds[0], func.bounds[1],
-             D=D, N=N, iterations=it, seed=s, n_blocks=2)),
-    ("WO2-Block4",
-     lambda func, D, N, it, s:
-         wo2(func, func.grad, func.bounds[0], func.bounds[1],
-             D=D, N=N, iterations=it, seed=s, n_blocks=4)),
+             D=D, N=N_WO2_PSO, iterations=fes // N_WO2_PSO, seed=s)),
     ("PSO",
-     lambda func, D, N, it, s:
+     lambda func, D, fes, s:
          pso(func, func.bounds[0], func.bounds[1],
-             D=D, N=N, iterations=it, seed=s)),
+             D=D, N=N_WO2_PSO, iterations=fes // N_WO2_PSO, seed=s)),
     ("RIME",
-     lambda func, D, N, it, s:
+     lambda func, D, fes, s:
          run_rime(func, func.bounds[0], func.bounds[1],
-                  D=D, N=N, iterations=it, seed=s)),
+                  D=D, N=N_WO2_PSO, iterations=fes // N_WO2_PSO, seed=s)),
     ("L-SHADE",
-     lambda func, D, N, it, s:
-         run_lshade(func, func.bounds[0], func.bounds[1],
-                    D=D, N=N, iterations=it, seed=s)),
-    ("DE",
-     lambda func, D, N, it, s:
-         run_de(func, func.bounds[0], func.bounds[1],
-                D=D, N=N, iterations=it, seed=s)),
+     lambda func, D, fes, s: (
+         lambda ni: run_lshade(func, func.bounds[0], func.bounds[1],
+                               D=D, N=ni, iterations=fes // ni, seed=s)
+     )(_lshade_n(D))),
 ]
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -394,17 +359,18 @@ ALGO_LIST = [
 all_results = {}   # (fname, D, aname) → np.array(N_RUNS)
 
 for D in DIMS:
-    N     = max(30, D * 2)
-    iters = 1000
+    max_fes   = MAX_FES_COEF * D
+    n_lshade  = _lshade_n(D)
 
     bench = [(cls.name, cls(D)) for cls in FUNC_CLASSES]
 
-    print(f"\n{'='*95}")
-    print(f"  D = {D:3d}  |  population N = {N}  |  iterations = {iters}  |  runs = {N_RUNS}")
-    print(f"{'='*95}")
+    print(f"\n{'='*100}")
+    print(f"  D = {D:3d}  |  MaxFES = {max_fes:,}  |  N(WO2/PSO/RIME) = {N_WO2_PSO}"
+          f"  N(L-SHADE_init) = {n_lshade}  |  runs = {N_RUNS}")
+    print(f"{'='*100}")
     print(f"  {'Function':>15} | {'Algorithm':>10} | "
           f"{'mean':>14} {'std':>12} {'best':>12} | {'time/run':>9}")
-    print(f"  {'-'*85}")
+    print(f"  {'-'*90}")
 
     for fname, func in bench:
         for aname, afunc in ALGO_LIST:
@@ -412,7 +378,7 @@ for D in DIMS:
             for run in range(N_RUNS):
                 t0 = time.time()
                 try:
-                    v = afunc(func, D, N, iters, run)
+                    v = afunc(func, D, max_fes, run)
                 except Exception as e:
                     print(f"    [ERR] {aname} D={D} run={run}: {e}")
                     v = float("nan")
@@ -426,7 +392,7 @@ for D in DIMS:
                 f"{np.nanmean(arr):>14.4e} {np.nanstd(arr):>12.4e} "
                 f"{np.nanmin(arr):>12.4e} | {np.mean(times):>9.3f}s"
             )
-        print(f"  {'-'*85}")
+        print(f"  {'-'*90}")
 
 # ──────────────────────────────────────────────────────────────────────────────
 #  최종 순위 요약
@@ -447,7 +413,7 @@ for D in DIMS:
 n_configs = len(DIMS) * len(FUNC_NAMES)
 print(f"  {'Algorithm':>10} | {'Avg Rank':>9} | {'#1st':>6} | {'#2nd':>6}"
       f"  (총 {n_configs} configs: {len(FUNC_NAMES)} functions × {len(DIMS)} dims)")
-print(f"  {'-'*60}")
+print(f"  {'-'*65}")
 for a, ranks in sorted(rank_accum.items(), key=lambda kv: np.mean(kv[1])):
     wins   = sum(1 for r in ranks if r == 1)
     second = sum(1 for r in ranks if r == 2)
@@ -462,8 +428,8 @@ print("  F4-Rastrigin : Shifted+Rotated Rastrigin   — 다봉, 10^D 지역 최�
 print("  F5-Schaffer  : Expanded Schaffer F6        — 다봉, sin 기반 복잡 지형")
 print()
 print("알고리즘 설명:")
-print("  WO2     : Weather Optimization v2 (본 연구, 2026)")
-print("  PSO     : Particle Swarm Optimization (기본 베이스라인)")
-print("  RIME    : Rime-Ice Optimization (Su et al. 2023)")
+print("  WO2     : Weather Optimization v2 (본 연구, 2026)  — N=30, MaxFES=10000D")
+print("  PSO     : Constriction PSO (Clerc-Kennedy)         — N=30, w=0.729, c1=c2=1.494")
+print("  RIME    : Rime-Ice Optimization (Su et al. 2023)   — N=30, W=5.0")
 print("  L-SHADE : Linear pop-reduction SHADE (Tanabe & Fukunaga 2014)")
-print("  DE      : Differential Evolution (scipy, popsize=15)")
+print("            N_init=18·√D·lnD (D10≈131, D30≈335, D50≈498), H=6")
