@@ -47,8 +47,11 @@ def pso(func, lower, upper, D=10, N=80, iterations=2000, seed=0):
 #  WO2 (Weather Optimization v2)
 # ──────────────────────────────────────────────────────────────────────────────
 def wo2(func, grad_func, lower=-5.12, upper=5.12, D=10, N=80, iterations=2000,
-        lr=0.05, beta=0.9, alpha=0.05, sigma=0.15, seed=0, return_history=False):
-    """WO2: 4-parameter simplified Weather Optimization (2026)"""
+        lr=0.05, beta=0.9, alpha=0.05, sigma=0.15, seed=0, n_blocks=1, return_history=False):
+    """WO2: 4-parameter simplified Weather Optimization (2026)
+    n_blocks=1 : 기존 동작 (전체 D차원 폭발)
+    n_blocks>1 : 블록 폭발 — D//n_blocks 차원만 랜덤화, 나머지는 x_best 고정
+    """
     rng  = np.random.default_rng(seed)
     span = upper - lower
     window = max(10, int(round(1.0 / (1.0 - beta))))
@@ -94,8 +97,16 @@ def wo2(func, grad_func, lower=-5.12, upper=5.12, D=10, N=80, iterations=2000,
                 n_exp      = min(n_explode, len(eligible_idx))
                 order      = np.argpartition(energy[eligible_idx], n_exp - 1)
                 explode_idx = eligible_idx[order[:n_exp]]
-                noise      = rng.standard_normal((n_exp, D))
-                x[explode_idx] = np.clip(x_best + sigma * span * noise, lower, upper)
+                if n_blocks <= 1:
+                    noise = rng.standard_normal((n_exp, D))
+                    x[explode_idx] = np.clip(x_best + sigma * span * noise, lower, upper)
+                else:
+                    block_size = max(1, D // n_blocks)
+                    free_dims  = rng.choice(D, size=block_size, replace=False)
+                    x_new      = np.tile(x_best, (n_exp, 1))
+                    noise      = rng.standard_normal((n_exp, block_size))
+                    x_new[:, free_dims] = x_best[free_dims] + sigma * span * noise
+                    x[explode_idx] = np.clip(x_new, lower, upper)
                 v[explode_idx] = 0.0
                 energy[explode_idx] = np.median(energy)
                 last_exp[explode_idx] = t
@@ -351,6 +362,14 @@ ALGO_LIST = [
      lambda func, D, N, it, s:
          wo2(func, func.grad, func.bounds[0], func.bounds[1],
              D=D, N=N, iterations=it, seed=s)),
+    ("WO2-Block2",
+     lambda func, D, N, it, s:
+         wo2(func, func.grad, func.bounds[0], func.bounds[1],
+             D=D, N=N, iterations=it, seed=s, n_blocks=2)),
+    ("WO2-Block4",
+     lambda func, D, N, it, s:
+         wo2(func, func.grad, func.bounds[0], func.bounds[1],
+             D=D, N=N, iterations=it, seed=s, n_blocks=4)),
     ("PSO",
      lambda func, D, N, it, s:
          pso(func, func.bounds[0], func.bounds[1],
