@@ -165,7 +165,7 @@ def run_de(func, lo, hi, D, N, iterations, seed):
     maxiter = max(1, budget // (popsize * D))
 
     def f1d(x):
-        return float(func(x[None, :]))
+        return float(func(np.asarray(x).reshape(1, -1))[0])
 
     res = differential_evolution(
         f1d, [(lo, hi)] * D,
