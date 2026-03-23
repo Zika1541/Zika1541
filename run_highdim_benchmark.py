@@ -23,19 +23,20 @@ with open(NB) as f:
     nb = json.load(f)
 
 ns = {}
-for idx in [4, 7, 9]:         # PSO(4), WO(7), WO2(9)
+for idx in [4, 7, 9, 11]:      # PSO(4), WO(7), WO2(9), WO3(11)
     try:
         exec("".join(nb["cells"][idx]["source"]), ns)
     except Exception as e:
         print(f"  [warn] cell {idx}: {e}")
 
-for idx in [43, 44, 45, 46]:  # CE(43), RIME(44), L-SHADE(45), extras(46)
+for idx in [45, 46, 47, 48]:  # CE(45), RIME(46), L-SHADE(47), extras(48)
     try:
         exec("".join(nb["cells"][idx]["source"]), ns)
     except Exception as e:
         print(f"  [warn] cell {idx}: {e}")
 
 wo2        = ns["wo2"]
+wo3        = ns["wo3"]
 pso        = ns["pso"]
 run_rime   = ns["run_rime"]
 run_lshade = ns["run_lshade"]
@@ -198,6 +199,10 @@ ALGO_LIST = [
      lambda func, D, N, it, s:
          wo2(func, func.grad, func.bounds[0], func.bounds[1],
              D=D, N=N, iterations=it, seed=s)),
+    ("WO3",
+     lambda func, D, N, it, s:
+         wo3(func, func.grad, func.bounds[0], func.bounds[1],
+             D=D, N=N, iterations=it, seed=s)),
     ("PSO",
      lambda func, D, N, it, s:
          pso(func, func.bounds[0], func.bounds[1],
@@ -298,6 +303,7 @@ print("  F7-Ackley    : 다봉 exp+cos 혼합   — 전역 주변 무수한 지�
 print()
 print("알고리즘:")
 print("  WO2     : Weather Optimization v2 (본 연구)")
+print("  WO3     : Weather Optimization v3 — Explosion Radius Annealing (sigma * max(1-0.9t/T, 0.2))")
 print("  PSO     : Particle Swarm Optimization")
 print("  RIME    : Rime-Ice Optimization (Su et al. 2023)")
 print("  L-SHADE : Linear pop-reduction SHADE (Tanabe & Fukunaga 2014)")
